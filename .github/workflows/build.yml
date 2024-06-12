@@ -14,7 +14,7 @@ jobs:
           else
             brew install libtool autoconf automake pkgconfig
           fi
-          pip install --break-system-packages cython
+          pip install --break-system-packages cython setuptools
       shell: bash
     - name: fetch libplist
       uses: dawidd6/action-download-artifact@v2
