@@ -36,8 +36,14 @@ extern "C" {
 #include <plist/plist.h>
 
 #ifndef LIBIMOBILEDEVICE_API
-#define LIBIMOBILEDEVICE_API
-#endif //LIBIMOBILEDEVICE_API 
+  #ifdef LIBIMOBILEDEVICE_STATIC
+    #define LIBIMOBILEDEVICE_API
+  #elif defined(_WIN32)
+    #define LIBIMOBILEDEVICE_API __declspec(dllimport)
+  #else
+    #define LIBIMOBILEDEVICE_API
+  #endif
+#endif
 
 /** Error Codes */
 typedef enum {
@@ -393,6 +399,13 @@ LIBIMOBILEDEVICE_API idevice_error_t idevice_get_handle(idevice_t device, uint32
  * @return IDEVICE_E_SUCCESS on success, otherwise an error code.
  */
 LIBIMOBILEDEVICE_API idevice_error_t idevice_get_udid(idevice_t device, char **udid);
+
+/**
+ * Returns a static string of the libimobiledevice version.
+ *
+ * @return The libimobiledevice version as static ascii string
+ */
+LIBIMOBILEDEVICE_API const char* libimobiledevice_version();
 
 #ifdef __cplusplus
 }
