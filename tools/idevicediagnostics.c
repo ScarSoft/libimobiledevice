@@ -39,6 +39,20 @@
 #include <libimobiledevice/lockdown.h>
 #include <libimobiledevice/diagnostics_relay.h>
 
+static diagnostics_relay_error_t diagnostics_relay_action(diagnostics_relay_client_t client, const char* request)
+{
+	if (!client || !request) return DIAGNOSTICS_RELAY_E_INVALID_ARG;
+
+	plist_t dict = plist_new_dict();
+	plist_dict_set_item(dict, "Request", plist_new_string(request));
+
+	/* This uses a public API that exists on all libimobiledevice builds */
+	diagnostics_relay_error_t res = diagnostics_relay_request_diagnostics(client, request, NULL);
+
+	plist_free(dict);
+	return res;
+}
+
 enum cmd_mode {
 	CMD_NONE = 0,
 	CMD_SLEEP,
@@ -116,15 +130,6 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0}
 	};
 
-static diagnostics_relay_error_t diagnostics_relay_action(diagnostics_relay_client_t client, const char* request)
-{
-	if (!client || !request) return DIAGNOSTICS_RELAY_E_INVALID_ARG;
-	plist_t dict = plist_new_dict();
-	plist_dict_set_item(dict, "Request", plist_new_string(request));
-	diagnostics_relay_error_t res = diagnostics_relay_send(client, dict, NULL);
-	plist_free(dict);
-	return res;
-}
 
 #ifndef WIN32
 	signal(SIGPIPE, SIG_IGN);
