@@ -47,7 +47,8 @@ enum cmd_mode {
 	CMD_DIAGNOSTICS,
 	CMD_MOBILEGESTALT,
 	CMD_IOREGISTRY,
-	CMD_IOREGISTRY_ENTRY
+	CMD_IOREGISTRY_ENTRY,
+	CMD_ERASE
 };
 
 static void print_xml(plist_t node)
@@ -57,6 +58,7 @@ static void print_xml(plist_t node)
 	plist_to_xml(node, &xml, &len);
 	if (xml) {
 		puts(xml);
+		free(xml);
 	}
 }
 
@@ -76,6 +78,7 @@ static void print_usage(int argc, char **argv, int is_error)
 		"  shutdown                   shutdown device\n"
 		"  restart                    restart device\n"
 		"  sleep                      put device into sleep mode (disconnects from host)\n"
+		"  erase                      erase all content and settings on the device (works even if not activated)\n"
 		"\n"
 		"The following OPTIONS are accepted:\n"
 		"  -u, --udid UDID       target specific device by UDID\n"
@@ -162,10 +165,14 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[0], "shutdown")) {
 		cmd = CMD_SHUTDOWN;
 	}
+	else if (!strcmp(argv[0], "erase")) {
+		cmd = CMD_ERASE;
+	}
 	else if (!strcmp(argv[0], "diagnostics")) {
 		cmd = CMD_DIAGNOSTICS;
-		/*  read type */
-		if (!argv[1] || ((strcmp(argv[1], "All") != 0) && (strcmp(argv[1], "WiFi") != 0) && (strcmp(argv[1], "GasGauge") != 0) && (strcmp(argv[1], "NAND") != 0) && (strcmp(argv[1], "HDMI") != 0))) {
+		if (!argv[1] || ((strcmp(argv[1], "All") != 0) && (strcmp(argv[1], "WiFi") != 0) &&
+			(strcmp(argv[1], "GasGauge") != 0) && (strcmp(argv[1], "NAND") != 0) &&
+			(strcmp(argv[1], "HDMI") != 0))) {
 			if (argv[1] == NULL) {
 				cmd_arg = strdup("All");
 			} else {
@@ -178,7 +185,6 @@ int main(int argc, char **argv)
 	}
 	else if (!strcmp(argv[0], "mobilegestalt")) {
 		cmd = CMD_MOBILEGESTALT;
-		/*  read keys */
 		if (!argv[1] || !*argv[1]) {
 			fprintf(stderr, "ERROR: Please supply the key to query.\n");
 			print_usage(argc, argv, 1);
@@ -193,20 +199,17 @@ int main(int argc, char **argv)
 	}
 	else if (!strcmp(argv[0], "ioreg")) {
 		cmd = CMD_IOREGISTRY;
-		/*  read plane */
 		if (argv[1]) {
 			cmd_arg = strdup(argv[1]);
 		}
 	}
 	else if (!strcmp(argv[0], "ioregentry")) {
 		cmd = CMD_IOREGISTRY_ENTRY;
-		/* read key */
 		if (argv[1]) {
 			cmd_arg = strdup(argv[1]);
 		}
 	}
 
-	/* verify options */
 	if (cmd == CMD_NONE) {
 		fprintf(stderr, "ERROR: Unsupported command '%s'\n", argv[0]);
 		print_usage(argc+optind, argv-optind, 1);
@@ -228,10 +231,8 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
-	/*  attempt to use newer diagnostics service available on iOS 5 and later */
 	ret = lockdownd_start_service(lockdown_client, "com.apple.mobile.diagnostics_relay", &service);
 	if (ret == LOCKDOWN_E_INVALID_SERVICE) {
-		/*  attempt to use older diagnostics service */
 		ret = lockdownd_start_service(lockdown_client, "com.apple.iosdiagnostics.relay", &service);
 	}
 	lockdownd_client_free(lockdown_client);
@@ -242,95 +243,98 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
-	result = EXIT_FAILURE;
+	if (diagnostics_relay_client_new(device, service, &diagnostics_client) != DIAGNOSTICS_RELAY_E_SUCCESS) {
+		printf("ERROR: Could not connect to diagnostics_relay!\n");
+		goto cleanup;
+	}
 
-	if ((ret == LOCKDOWN_E_SUCCESS) && service && (service->port > 0)) {
-		if (diagnostics_relay_client_new(device, service, &diagnostics_client) != DIAGNOSTICS_RELAY_E_SUCCESS) {
-			printf("ERROR: Could not connect to diagnostics_relay!\n");
-		} else {
-			switch (cmd) {
-				case CMD_SLEEP:
-					if (diagnostics_relay_sleep(diagnostics_client) == DIAGNOSTICS_RELAY_E_SUCCESS) {
-						printf("Putting device into deep sleep mode.\n");
-						result = EXIT_SUCCESS;
-					} else {
-						printf("ERROR: Failed to put device into deep sleep mode.\n");
-					}
-				break;
-				case CMD_RESTART:
-					if (diagnostics_relay_restart(diagnostics_client, DIAGNOSTICS_RELAY_ACTION_FLAG_WAIT_FOR_DISCONNECT) == DIAGNOSTICS_RELAY_E_SUCCESS) {
-						printf("Restarting device.\n");
-						result = EXIT_SUCCESS;
-					} else {
-						printf("ERROR: Failed to restart device.\n");
-					}
-				break;
-				case CMD_SHUTDOWN:
-					if (diagnostics_relay_shutdown(diagnostics_client, DIAGNOSTICS_RELAY_ACTION_FLAG_WAIT_FOR_DISCONNECT) == DIAGNOSTICS_RELAY_E_SUCCESS) {
-						printf("Shutting down device.\n");
-						result = EXIT_SUCCESS;
-					} else {
-						printf("ERROR: Failed to shutdown device.\n");
-					}
-				break;
-				case CMD_MOBILEGESTALT:
-					if (diagnostics_relay_query_mobilegestalt(diagnostics_client, keys, &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
-						if (node) {
-							print_xml(node);
-							result = EXIT_SUCCESS;
-						}
-					} else {
-						printf("ERROR: Unable to query mobilegestalt keys.\n");
-					}
-				break;
-				case CMD_IOREGISTRY_ENTRY:
-					if (diagnostics_relay_query_ioregistry_entry(diagnostics_client, cmd_arg == NULL ? "": cmd_arg, "", &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
-						if (node) {
-							print_xml(node);
-							result = EXIT_SUCCESS;
-						}
-					} else {
-						printf("ERROR: Unable to retrieve IORegistry from device.\n");
-					}
-					break;
-				case CMD_IOREGISTRY:
-					if (diagnostics_relay_query_ioregistry_plane(diagnostics_client, cmd_arg == NULL ? "": cmd_arg, &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
-						if (node) {
-							print_xml(node);
-							result = EXIT_SUCCESS;
-						}
-					} else {
-						printf("ERROR: Unable to retrieve IORegistry from device.\n");
-					}
-					break;
-				case CMD_DIAGNOSTICS:
-				default:
-					if (diagnostics_relay_request_diagnostics(diagnostics_client, cmd_arg, &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
-						if (node) {
-							print_xml(node);
-							result = EXIT_SUCCESS;
-						}
-					} else {
-						printf("ERROR: Unable to retrieve diagnostics from device.\n");
-					}
-					break;
+	switch (cmd) {
+		case CMD_ERASE:
+			printf("Sending erase command (this will wipe the device!)...\n");
+			if (diagnostics_relay_action(diagnostics_client, "EraseDevice") == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				printf("Erase command sent successfully.\n");
+				result = EXIT_SUCCESS;
+			} else {
+				printf("ERROR: Failed to send erase command.\n");
 			}
-
-			diagnostics_relay_goodbye(diagnostics_client);
-			diagnostics_relay_client_free(diagnostics_client);
-		}
-	} else {
-		printf("ERROR: Could not start diagnostics service!\n");
+			break;
+		case CMD_SLEEP:
+			if (diagnostics_relay_sleep(diagnostics_client) == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				printf("Putting device into deep sleep mode.\n");
+				result = EXIT_SUCCESS;
+			} else {
+				printf("ERROR: Failed to put device into deep sleep mode.\n");
+			}
+			break;
+		case CMD_RESTART:
+			if (diagnostics_relay_restart(diagnostics_client, DIAGNOSTICS_RELAY_ACTION_FLAG_WAIT_FOR_DISCONNECT) == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				printf("Restarting device.\n");
+				result = EXIT_SUCCESS;
+			} else {
+				printf("ERROR: Failed to restart device.\n");
+			}
+			break;
+		case CMD_SHUTDOWN:
+			if (diagnostics_relay_shutdown(diagnostics_client, DIAGNOSTICS_RELAY_ACTION_FLAG_WAIT_FOR_DISCONNECT) == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				printf("Shutting down device.\n");
+				result = EXIT_SUCCESS;
+			} else {
+				printf("ERROR: Failed to shutdown device.\n");
+			}
+			break;
+		case CMD_MOBILEGESTALT:
+			if (diagnostics_relay_query_mobilegestalt(diagnostics_client, keys, &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				if (node) {
+					print_xml(node);
+					result = EXIT_SUCCESS;
+				}
+			} else {
+				printf("ERROR: Unable to query mobilegestalt keys.\n");
+			}
+			break;
+		case CMD_IOREGISTRY_ENTRY:
+			if (diagnostics_relay_query_ioregistry_entry(diagnostics_client, cmd_arg == NULL ? "" : cmd_arg, "", &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				if (node) {
+					print_xml(node);
+					result = EXIT_SUCCESS;
+				}
+			} else {
+				printf("ERROR: Unable to retrieve IORegistry entry.\n");
+			}
+			break;
+		case CMD_IOREGISTRY:
+			if (diagnostics_relay_query_ioregistry_plane(diagnostics_client, cmd_arg == NULL ? "" : cmd_arg, &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				if (node) {
+					print_xml(node);
+					result = EXIT_SUCCESS;
+				}
+			} else {
+				printf("ERROR: Unable to retrieve IORegistry.\n");
+			}
+			break;
+		case CMD_DIAGNOSTICS:
+		default:
+			if (diagnostics_relay_request_diagnostics(diagnostics_client, cmd_arg, &node) == DIAGNOSTICS_RELAY_E_SUCCESS) {
+				if (node) {
+					print_xml(node);
+					result = EXIT_SUCCESS;
+				}
+			} else {
+				printf("ERROR: Unable to retrieve diagnostics.\n");
+			}
+			break;
 	}
 
-	if (service) {
-		lockdownd_service_descriptor_free(service);
-		service = NULL;
-	}
-
-	idevice_free(device);
+	diagnostics_relay_goodbye(diagnostics_client);
+	diagnostics_relay_client_free(diagnostics_client);
 
 cleanup:
+	if (service) {
+		lockdownd_service_descriptor_free(service);
+	}
+	if (device) {
+		idevice_free(device);
+	}
 	if (node) {
 		plist_free(node);
 	}
