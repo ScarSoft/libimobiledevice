@@ -119,7 +119,7 @@ int main(int argc, char **argv)
 #ifndef WIN32
 	signal(SIGPIPE, SIG_IGN);
 #endif
-	/* parse cmdline args */
+
 	while ((c = getopt_long(argc, argv, "dhu:nv", longopts, NULL)) != -1) {
 		switch (c) {
 		case 'd':
@@ -249,15 +249,19 @@ int main(int argc, char **argv)
 	}
 
 	switch (cmd) {
-		case CMD_ERASE:
+		case CMD_ERASE: {
 			printf("Sending erase command (this will wipe the device!)...\n");
-			if (diagnostics_relay_action(diagnostics_client, "EraseDevice") == DIAGNOSTICS_RELAY_E_SUCCESS) {
+			plist_t dict = plist_new_dict();
+			plist_dict_set_item(dict, "Request", plist_new_string("EraseDevice"));
+			if (diagnostics_relay_send_request(diagnostics_client, dict, NULL) == DIAGNOSTICS_RELAY_E_SUCCESS) {
 				printf("Erase command sent successfully.\n");
 				result = EXIT_SUCCESS;
 			} else {
 				printf("ERROR: Failed to send erase command.\n");
 			}
+			plist_free(dict);
 			break;
+		}
 		case CMD_SLEEP:
 			if (diagnostics_relay_sleep(diagnostics_client) == DIAGNOSTICS_RELAY_E_SUCCESS) {
 				printf("Putting device into deep sleep mode.\n");
